@@ -12,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -19,6 +20,7 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -27,12 +29,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.PrimaryTabRow
@@ -43,6 +47,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,6 +55,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -60,10 +66,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -75,16 +80,12 @@ import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** name, blur, darkness */
+/** name, blur */
 private val PRESETS = listOf(
-    Triple("Soft", 0.20f, 0.00f),
-    Triple("iOS", 0.40f, 0.10f),
-    Triple("Heavy", 0.85f, 0.25f)
+    "Soft" to 0.20f,
+    "iOS" to 0.40f,
+    "Heavy" to 0.85f
 )
-
-/** True when a slider value moved onto or across 0%, 50% or 100%. */
-private fun crossedTick(old: Float, new: Float): Boolean =
-    listOf(0f, 0.5f, 1f).any { m -> (old < m && new >= m) || (old > m && new <= m) }
 
 class MainActivity : ComponentActivity() {
 
@@ -135,12 +136,16 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
     var original by remember { mutableStateOf<Bitmap?>(null) }
     var comparing by remember { mutableStateOf(false) }
     var showMockup by rememberSaveable { mutableStateOf(false) }
-    val haptic = LocalHapticFeedback.current
     var loading by remember { mutableStateOf(incoming == null && sourceFile.exists()) }
     var busy by remember { mutableStateOf(false) }
 
+    // Live gesture feedback for the hint cards.
+    var dragStamp by remember { mutableLongStateOf(0L) }
+    var pinchStamp by remember { mutableLongStateOf(0L) }
+    var dragActive by remember { mutableStateOf(false) }
+    var pinchActive by remember { mutableStateOf(false) }
+
     var blur by remember { mutableFloatStateOf(prefs.getFloat("blur", 0.4f)) }
-    var dark by remember { mutableFloatStateOf(prefs.getFloat("dark", 0f)) }
     var zoom by remember { mutableFloatStateOf(prefs.getFloat("zoom", 1f)) }
     var panX by remember { mutableFloatStateOf(prefs.getFloat("panX", 0f)) }
     var panY by remember { mutableFloatStateOf(prefs.getFloat("panY", 0f)) }
@@ -188,22 +193,38 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
     }
 
     // Live preview.
-    LaunchedEffect(source, zoom, panX, panY, blur, dark) {
+    LaunchedEffect(source, zoom, panX, panY, blur) {
         val s = source ?: return@LaunchedEffect
         val h = (360 / aspect).roundToInt()
         val (fx, plain) = withContext(Dispatchers.Default) {
-            WallpaperSetter.process(s, 360, h, zoom, panX, panY, blur, dark) to
+            WallpaperSetter.process(s, 360, h, zoom, panX, panY, blur) to
                 WallpaperSetter.render(s, 360, h, zoom, panX, panY)
         }
         shown = fx
         original = plain
     }
 
+    // Gesture cards light up briefly after each drag / pinch event.
+    LaunchedEffect(dragStamp) {
+        if (dragStamp != 0L) {
+            dragActive = true
+            delay(300)
+            dragActive = false
+        }
+    }
+    LaunchedEffect(pinchStamp) {
+        if (pinchStamp != 0L) {
+            pinchActive = true
+            delay(300)
+            pinchActive = false
+        }
+    }
+
     // Remember settings (debounced).
-    LaunchedEffect(blur, dark, zoom, panX, panY, targetIndex) {
+    LaunchedEffect(blur, zoom, panX, panY, targetIndex) {
         delay(300)
         prefs.edit()
-            .putFloat("blur", blur).putFloat("dark", dark)
+            .putFloat("blur", blur)
             .putFloat("zoom", zoom).putFloat("panX", panX).putFloat("panY", panY)
             .putInt("target", targetIndex)
             .apply()
@@ -223,6 +244,13 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                         CircularProgressIndicator()
                     } else {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                painterResource(R.drawable.ic_crystal),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(56.dp)
+                            )
+                            Spacer(Modifier.height(12.dp))
                             Text("Blurpaper", style = MaterialTheme.typography.displaySmall)
                             Spacer(Modifier.height(8.dp))
                             Text(
@@ -236,9 +264,30 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                     }
                 }
             } else {
-                // Preview: drag to move, pinch to zoom.
+                // Title banner.
+                Row(
+                    Modifier.fillMaxWidth().height(52.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_crystal),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(26.dp)
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        "Blurpaper",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                // Preview: drag to move, pinch to zoom, hold to compare.
                 Box(
-                    Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp),
+                    Modifier.weight(1f).fillMaxWidth().padding(bottom = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     val img = if (comparing) original else shown
@@ -255,6 +304,8 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                                         panX = (panX + pan.x / size.width).coerceIn(-mx, mx)
                                         panY = (panY + pan.y / size.height).coerceIn(-my, my)
                                         zoom = z
+                                        if (pan.x != 0f || pan.y != 0f) dragStamp = System.nanoTime()
+                                        if (gestureZoom != 1f) pinchStamp = System.nanoTime()
                                     }
                                 }
                                 // Press and hold (without moving) to see the original.
@@ -276,6 +327,20 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                                 modifier = Modifier.fillMaxSize()
                             )
                             if (showMockup) MockupOverlay()
+                            if (comparing) {
+                                Surface(
+                                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 14.dp),
+                                    shape = RoundedCornerShape(50),
+                                    color = Color.Black.copy(alpha = 0.6f)
+                                ) {
+                                    Text(
+                                        "Original",
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -286,59 +351,73 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                     }
                 }
 
-                Box(Modifier.fillMaxWidth().height(216.dp).padding(top = 16.dp)) {
+                Box(Modifier.fillMaxWidth().height(176.dp).padding(top = 16.dp)) {
                     when (tab) {
-                        0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(
-                                "Drag to move, pinch to zoom, press and hold to see the original.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                FilledTonalButton(onClick = { pick() }, enabled = !busy) {
-                                    Text("Change image")
-                                }
-                                OutlinedButton(onClick = { zoom = 1f; panX = 0f; panY = 0f }) {
-                                    Text("Reset position")
+                        0 -> Column(
+                            Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            // Gesture guide: each card lights up while you use that gesture.
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                GestureCard("Drag", "to move", dragActive, Modifier.weight(1f))
+                                GestureCard("Pinch", "to zoom", pinchActive, Modifier.weight(1f))
+                                GestureCard("Hold", "to compare", comparing, Modifier.weight(1f))
+                            }
+                            // Three equal buttons.
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                val btn = Modifier.weight(1f).height(44.dp)
+                                val pad = PaddingValues(horizontal = 8.dp)
+                                FilledTonalButton(
+                                    onClick = { pick() },
+                                    enabled = !busy,
+                                    modifier = btn,
+                                    contentPadding = pad
+                                ) { Text("Change", maxLines = 1) }
+                                OutlinedButton(
+                                    onClick = { zoom = 1f; panX = 0f; panY = 0f },
+                                    modifier = btn,
+                                    contentPadding = pad
+                                ) { Text("Reset", maxLines = 1) }
+                                if (showMockup) {
+                                    Button(
+                                        onClick = { showMockup = false },
+                                        modifier = btn,
+                                        contentPadding = pad
+                                    ) { Text("Mockup", maxLines = 1) }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { showMockup = true },
+                                        modifier = btn,
+                                        contentPadding = pad
+                                    ) { Text("Mockup", maxLines = 1) }
                                 }
                             }
-                            FilterChip(
-                                selected = showMockup,
-                                onClick = { showMockup = !showMockup },
-                                label = { Text("Home screen mockup") }
-                            )
                         }
 
                         1 -> Column(
                             Modifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                PRESETS.forEach { (name, b, d) ->
+                                PRESETS.forEach { (name, value) ->
                                     FilterChip(
-                                        selected = abs(blur - b) < 0.01f && abs(dark - d) < 0.01f,
-                                        onClick = { blur = b; dark = d },
+                                        selected = abs(blur - value) < 0.01f,
+                                        onClick = { blur = value },
                                         label = { Text(name) }
                                     )
                                 }
                             }
-                            Spacer(Modifier.height(4.dp))
                             Text("Blur  ${(blur * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
                             Slider(
                                 value = blur,
-                                onValueChange = { v ->
-                                    if (crossedTick(blur, v)) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    blur = v
-                                },
-                                modifier = Modifier.fillMaxWidth(0.78f)
-                            )
-                            Text("Darkness  ${(dark * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
-                            Slider(
-                                value = dark,
-                                onValueChange = { v ->
-                                    if (crossedTick(dark, v)) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    dark = v
-                                },
+                                onValueChange = { blur = it },
                                 modifier = Modifier.fillMaxWidth(0.78f)
                             )
                         }
@@ -360,7 +439,7 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                                         busy = true
                                         val ok = withContext(Dispatchers.IO) {
                                             val out = WallpaperSetter.process(
-                                                src, screenW, screenH, zoom, panX, panY, blur, dark
+                                                src, screenW, screenH, zoom, panX, panY, blur
                                             )
                                             WallpaperSetter.apply(context, out, Target.values()[targetIndex])
                                         }
@@ -375,6 +454,33 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** Small hint card that highlights while its gesture is being performed. */
+@Composable
+private fun GestureCard(title: String, subtitle: String, active: Boolean, modifier: Modifier = Modifier) {
+    val container by animateColorAsState(
+        if (active) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceContainerHighest,
+        label = "gestureCard"
+    )
+    val content = if (active) MaterialTheme.colorScheme.onPrimaryContainer
+    else MaterialTheme.colorScheme.onSurfaceVariant
+    Surface(
+        modifier = modifier.height(60.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = container,
+        contentColor = content
+    ) {
+        Column(
+            Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(subtitle, style = MaterialTheme.typography.labelSmall)
         }
     }
 }
