@@ -2,9 +2,7 @@ package com.saikat.blurpaper
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.MaterialExpressiveTheme
-import androidx.compose.material3.MotionScheme
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -12,8 +10,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
-/** Material 3 Expressive theme: dynamic color + expressive (springy) motion. */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+/** Material 3 theme with dynamic (Material You) color on Android 12+. */
 @Composable
 fun BlurpaperTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
@@ -24,9 +21,5 @@ fun BlurpaperTheme(content: @Composable () -> Unit) {
         dark -> darkColorScheme()
         else -> lightColorScheme()
     }
-    MaterialExpressiveTheme(
-        colorScheme = scheme,
-        motionScheme = MotionScheme.expressive(),
-        content = content
-    )
+    MaterialTheme(colorScheme = scheme, content = content)
 }
