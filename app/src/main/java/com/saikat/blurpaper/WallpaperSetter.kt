@@ -5,7 +5,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
@@ -29,9 +28,6 @@ object WallpaperSetter {
 
     /** Extra saturation at full blur (0.25 = +25%). Tune to taste. */
     private const val SATURATION_BOOST = 0.25f
-
-    /** Black overlay opacity at full "darkness" slider. */
-    private const val MAX_DARK_ALPHA = 0.7f
 
     fun screenSize(context: Context): Pair<Int, Int> {
         val dm = context.resources.displayMetrics
@@ -107,16 +103,16 @@ object WallpaperSetter {
         return out
     }
 
-    /** Full pipeline: crop (zoom/pan) -> blur -> darken. Used for both preview and final. */
+    /** Full pipeline: crop (zoom/pan) -> blur -> saturation boost. Used for both preview and final. */
     fun process(
         src: Bitmap, outW: Int, outH: Int,
         zoom: Float, panX: Float, panY: Float,
-        blur: Float, dark: Float
+        blur: Float
     ): Bitmap {
         val blurred = blur(render(src, outW, outH, zoom, panX, panY), blur)
         // iOS also lifts color under its blur, so boost saturation in proportion to blur.
         val vivid = if (blur > 0.005f) saturate(blurred, 1f + SATURATION_BOOST * blur) else blurred
-        return darken(vivid, dark)
+        return vivid
     }
 
     private fun saturate(src: Bitmap, saturation: Float): Bitmap {
@@ -154,14 +150,6 @@ object WallpaperSetter {
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         out.setPixels(px, 0, w, 0, 0, w, h)
         return Bitmap.createScaledBitmap(out, src.width, src.height, true)
-    }
-
-    private fun darken(src: Bitmap, amount: Float): Bitmap {
-        if (amount <= 0.005f) return src
-        val m = if (src.isMutable) src else src.copy(Bitmap.Config.ARGB_8888, true)
-        val alpha = (amount * MAX_DARK_ALPHA * 255f).roundToInt().coerceIn(0, 255)
-        Canvas(m).drawColor(Color.argb(alpha, 0, 0, 0))
-        return m
     }
 
     fun apply(context: Context, bitmap: Bitmap, target: Target): Boolean = try {
