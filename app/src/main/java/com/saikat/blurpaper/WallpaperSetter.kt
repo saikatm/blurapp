@@ -6,6 +6,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.media.ExifInterface
@@ -24,6 +26,9 @@ object WallpaperSetter {
     private const val MAX_BLUR_FRACTION = 0.05f
 
     const val MAX_ZOOM = 4f
+
+    /** Extra saturation at full blur (0.25 = +25%). Tune to taste. */
+    private const val SATURATION_BOOST = 0.25f
 
     /** Black overlay opacity at full "darkness" slider. */
     private const val MAX_DARK_ALPHA = 0.7f
@@ -107,7 +112,21 @@ object WallpaperSetter {
         src: Bitmap, outW: Int, outH: Int,
         zoom: Float, panX: Float, panY: Float,
         blur: Float, dark: Float
-    ): Bitmap = darken(blur(render(src, outW, outH, zoom, panX, panY), blur), dark)
+    ): Bitmap {
+        val blurred = blur(render(src, outW, outH, zoom, panX, panY), blur)
+        // iOS also lifts color under its blur, so boost saturation in proportion to blur.
+        val vivid = if (blur > 0.005f) saturate(blurred, 1f + SATURATION_BOOST * blur) else blurred
+        return darken(vivid, dark)
+    }
+
+    private fun saturate(src: Bitmap, saturation: Float): Bitmap {
+        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+        val paint = Paint().apply {
+            colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(saturation) })
+        }
+        Canvas(out).drawBitmap(src, 0f, 0f, paint)
+        return out
+    }
 
     /** strength is 0..1. Radius scales with image width, so preview and final look the same. */
     private fun blur(src: Bitmap, strength: Float): Bitmap {
