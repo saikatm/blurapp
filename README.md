@@ -6,6 +6,11 @@ A tiny, minimal Android app to blur your wallpaper before setting it. Built with
 
 - **Blur slider** with live preview (Gaussian-style blur, like the iOS home screen)
 - **Darkness slider** to help icons and widgets stand out
+- **Presets**: Soft, iOS and Heavy
+- **Saturation boost** under the blur, like iOS
+- **Home screen mockup** overlay to check icon legibility
+- **Press and hold** the preview to compare with the original
+- **Haptic ticks** on the sliders at 0%, 50% and 100%
 - **Drag and pinch** to reposition and zoom the image before setting
 - **Home, Lock or Both** screen targets
 - **Share to Blurpaper** from Gallery or any app
