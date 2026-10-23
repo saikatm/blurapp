@@ -13,6 +13,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +32,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.PrimaryTabRow
@@ -55,16 +58,33 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.roundToInt
+
+/** name, blur, darkness */
+private val PRESETS = listOf(
+    Triple("Soft", 0.20f, 0.00f),
+    Triple("iOS", 0.40f, 0.10f),
+    Triple("Heavy", 0.85f, 0.25f)
+)
+
+/** True when a slider value moved onto or across 0%, 50% or 100%. */
+private fun crossedTick(old: Float, new: Float): Boolean =
+    listOf(0f, 0.5f, 1f).any { m -> (old < m && new >= m) || (old > m && new <= m) }
 
 class MainActivity : ComponentActivity() {
 
@@ -112,6 +132,10 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
 
     var source by remember { mutableStateOf<Bitmap?>(null) }
     var shown by remember { mutableStateOf<Bitmap?>(null) }
+    var original by remember { mutableStateOf<Bitmap?>(null) }
+    var comparing by remember { mutableStateOf(false) }
+    var showMockup by rememberSaveable { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current
     var loading by remember { mutableStateOf(incoming == null && sourceFile.exists()) }
     var busy by remember { mutableStateOf(false) }
 
@@ -166,9 +190,13 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
     // Live preview.
     LaunchedEffect(source, zoom, panX, panY, blur, dark) {
         val s = source ?: return@LaunchedEffect
-        shown = withContext(Dispatchers.Default) {
-            WallpaperSetter.process(s, 360, (360 / aspect).roundToInt(), zoom, panX, panY, blur, dark)
+        val h = (360 / aspect).roundToInt()
+        val (fx, plain) = withContext(Dispatchers.Default) {
+            WallpaperSetter.process(s, 360, h, zoom, panX, panY, blur, dark) to
+                WallpaperSetter.render(s, 360, h, zoom, panX, panY)
         }
+        shown = fx
+        original = plain
     }
 
     // Remember settings (debounced).
@@ -213,11 +241,10 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                     Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    shown?.let {
-                        Image(
-                            bitmap = it.asImageBitmap(),
-                            contentDescription = null,
-                            modifier = Modifier
+                    val img = if (comparing) original else shown
+                    img?.let {
+                        Box(
+                            Modifier
                                 .fillMaxHeight()
                                 .aspectRatio(aspect)
                                 .clip(RoundedCornerShape(32.dp))
@@ -230,7 +257,26 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                                         zoom = z
                                     }
                                 }
-                        )
+                                // Press and hold (without moving) to see the original.
+                                .pointerInput(Unit) {
+                                    detectTapGestures(onPress = {
+                                        val job = scope.launch {
+                                            delay(250)
+                                            comparing = true
+                                        }
+                                        tryAwaitRelease()
+                                        job.cancel()
+                                        comparing = false
+                                    })
+                                }
+                        ) {
+                            Image(
+                                bitmap = it.asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            if (showMockup) MockupOverlay()
+                        }
                     }
                 }
 
@@ -240,11 +286,11 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                     }
                 }
 
-                Box(Modifier.fillMaxWidth().height(176.dp).padding(top = 16.dp)) {
+                Box(Modifier.fillMaxWidth().height(216.dp).padding(top = 16.dp)) {
                     when (tab) {
                         0 -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text(
-                                "Drag the preview to move, pinch to zoom.",
+                                "Drag to move, pinch to zoom, press and hold to see the original.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -256,13 +302,45 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                                     Text("Reset position")
                                 }
                             }
+                            FilterChip(
+                                selected = showMockup,
+                                onClick = { showMockup = !showMockup },
+                                label = { Text("Home screen mockup") }
+                            )
                         }
 
-                        1 -> Column {
+                        1 -> Column(
+                            Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                PRESETS.forEach { (name, b, d) ->
+                                    FilterChip(
+                                        selected = abs(blur - b) < 0.01f && abs(dark - d) < 0.01f,
+                                        onClick = { blur = b; dark = d },
+                                        label = { Text(name) }
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
                             Text("Blur  ${(blur * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
-                            Slider(value = blur, onValueChange = { blur = it })
+                            Slider(
+                                value = blur,
+                                onValueChange = { v ->
+                                    if (crossedTick(blur, v)) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    blur = v
+                                },
+                                modifier = Modifier.fillMaxWidth(0.78f)
+                            )
                             Text("Darkness  ${(dark * 100).roundToInt()}%", style = MaterialTheme.typography.labelLarge)
-                            Slider(value = dark, onValueChange = { dark = it })
+                            Slider(
+                                value = dark,
+                                onValueChange = { v ->
+                                    if (crossedTick(dark, v)) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    dark = v
+                                },
+                                modifier = Modifier.fillMaxWidth(0.78f)
+                            )
                         }
 
                         else -> Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -297,6 +375,40 @@ private fun BlurpaperApp(incoming: Uri?, onIncomingHandled: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** Fake clock and app icons drawn over the preview, to judge legibility. */
+@Composable
+private fun MockupOverlay() {
+    val tile = Color.White.copy(alpha = 0.88f)
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Fri 23", color = Color.White, style = MaterialTheme.typography.labelLarge)
+            Text("9:41", color = Color.White, fontSize = 56.sp, fontWeight = FontWeight.Light)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            repeat(3) { MockupIconRow(tile) }
+        }
+        MockupIconRow(tile)
+    }
+}
+
+@Composable
+private fun MockupIconRow(color: Color) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        repeat(4) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(color)
+            )
         }
     }
 }
